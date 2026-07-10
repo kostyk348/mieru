@@ -108,7 +108,8 @@ func (s *Server) handleConnect(ctx context.Context, req *model.Request, proxyCon
 		return fmt.Errorf("failed to send reply: %w", err)
 	}
 
-	return common.BidiCopy(proxyConn, target)
+	targetWithTimeout := common.NewIdleTimeoutConn(target, common.DefaultIdleTimeout)
+	return common.BidiCopy(proxyConn, targetWithTimeout)
 }
 
 // handleBind is used to handle a bind command.

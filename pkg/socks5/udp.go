@@ -24,6 +24,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	apicommon "github.com/enfein/mieru/v3/apis/common"
 	"github.com/enfein/mieru/v3/apis/model"
@@ -32,16 +33,46 @@ import (
 	"github.com/enfein/mieru/v3/pkg/stderror"
 )
 
+// cachedHeader wraps a UDP associate header with its creation time.
+// Used by addrMap to enable age-based eviction of stale entries.
+type cachedHeader struct {
+	header    []byte
+	createdAt time.Time
+}
+
 // RunUDPAssociateLoop exchanges socks5 UDP packets between a socks5 proxy client and a mieru proxy server,
 // the proxy server is connected via the PacketOverStreamTunnel.
 func RunUDPAssociateLoop(udpConn *net.UDPConn, conn *apicommon.PacketOverStreamTunnel, resolver apicommon.DNSResolver) error {
 	var udpErr atomic.Value
 
-	// addrMap maps the UDPAddr in string to the bytes in UDP associate header.
+	// addrMap maps the UDPAddr in string to the UDP associate header bytes.
+	// Entries older than cacheMaxAge are periodically removed.
 	var addrMap sync.Map
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+
+	// Periodic cleanup: remove stale addrMap entries.
+	cleanupDone := make(chan struct{})
+	go func() {
+		const cacheMaxAge = 30 * time.Minute
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				addrMap.Range(func(k, v any) bool {
+					entry := v.(*cachedHeader)
+					if time.Since(entry.createdAt) > cacheMaxAge {
+						addrMap.Delete(k)
+					}
+					return true
+				})
+			case <-cleanupDone:
+				return
+			}
+		}
+	}()
 
 	// Packets from socks5 proxy client -> mieru proxy server.
 	go func() {
@@ -69,7 +100,7 @@ func RunUDPAssociateLoop(udpConn *net.UDPConn, conn *apicommon.PacketOverStreamT
 				UDPAssociateErrors.Add(1)
 				continue
 			}
-			addrMap.Store(dstAddr.String(), datagram.Header)
+			addrMap.Store(dstAddr.String(), &cachedHeader{header: datagram.Header, createdAt: time.Now()})
 			ws, err := udpConn.WriteToUDP(datagram.Payload, dstAddr)
 			if err != nil {
 				log.Debugf("UDP associate [%v - %v] WriteToUDP() failed: %v", udpConn.LocalAddr(), dstAddr, err)
@@ -104,10 +135,10 @@ func RunUDPAssociateLoop(udpConn *net.UDPConn, conn *apicommon.PacketOverStreamT
 			var header []byte
 			v, ok := addrMap.Load(addr.String())
 			if ok {
-				header = v.([]byte)
+				header = v.(*cachedHeader).header
 			} else {
 				header = udpAddrToHeader(addr)
-				addrMap.Store(addr.String(), header)
+				addrMap.Store(addr.String(), &cachedHeader{header: header, createdAt: time.Now()})
 			}
 			_, err = conn.Write(append(append([]byte(nil), header...), buf[:n]...))
 			if err != nil {
@@ -123,7 +154,11 @@ func RunUDPAssociateLoop(udpConn *net.UDPConn, conn *apicommon.PacketOverStreamT
 	}()
 
 	wg.Wait()
-	return udpErr.Load().(error)
+	close(cleanupDone)
+	if err := udpErr.Load(); err != nil {
+		return err.(error)
+	}
+	return nil
 }
 
 // RunUDPForwardingLoop exchanges socks5 UDP packets between a mieru proxy client and a socks5 proxy server,
