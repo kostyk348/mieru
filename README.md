@@ -4,6 +4,8 @@
 [![Releases](https://img.shields.io/github/release/enfein/mieru/all.svg?style=flat)](https://github.com/enfein/mieru/releases)
 [![Downloads](https://img.shields.io/github/downloads/enfein/mieru/total.svg?style=flat)](https://github.com/enfein/mieru/releases)
 [![LICENSE](https://img.shields.io/github/license/enfein/mieru.svg?style=flat)](./LICENSE)
+[![License](https://img.shields.io/badge/license-GPL-3.0-green)](https://github.com/kostyk348/mieru/blob/main/LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/kostyk348/mieru?branch=main)](https://github.com/kostyk348/mieru/commits/main)
 
 [中文文档](./README.zh_CN.md)
 
